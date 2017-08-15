@@ -11,6 +11,7 @@ import com.github.phenomics.ontolib.ontology.algo.InformationContentComputation;
 import com.github.phenomics.ontolib.ontology.data.ImmutableOntology;
 import com.github.phenomics.ontolib.ontology.data.TermAnnotations;
 import com.github.phenomics.ontolib.ontology.data.TermId;
+import com.github.phenomics.ontolib.ontology.scoredist.ScoreDistribution;
 import com.github.phenomics.ontolib.ontology.scoredist.ScoreSamplingOptions;
 import com.github.phenomics.ontolib.ontology.scoredist.SimilarityScoreSampling;
 import com.github.phenomics.ontolib.ontology.similarity.ResnikSimilarity;
@@ -20,6 +21,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -55,6 +57,16 @@ public class PrecomputeScoresCommand {
   /** The Resnik similarity. */
   ResnikSimilarity<HpoTerm, HpoTermRelation> resnikSimilarity;
 
+  /**
+   * The resulting score distribution; will be written out.
+   *
+   * <p>
+   * The output is a mapping from term count to {@link ScoreDistribution} which maps Entrez gene ID
+   * to empirical p value distribution.
+   * </p>
+   */
+  Map<Integer, ScoreDistribution> scoreDistribution;
+
   /** Constructor. */
   public PrecomputeScoresCommand(PrecomputeScoresOptions options) {
     this.options = options;
@@ -66,6 +78,7 @@ public class PrecomputeScoresCommand {
     loadOntology();
     precomputePairwiseResnik();
     performSampling();
+    writeDistribution();
     printFooter();
   }
 
@@ -148,9 +161,26 @@ public class PrecomputeScoresCommand {
     final SimilarityScoreSampling<HpoTerm, HpoTermRelation> sampling =
         new SimilarityScoreSampling<>(phenotypicAbnormalitySubOntology, resnikSimilarity,
             samplingOptions);
-    sampling.performSampling(objectIdToTermId);
+    scoreDistribution = sampling.performSampling(objectIdToTermId);
 
     LOGGER.info("Done with sampling.");
+  }
+
+  private void writeDistribution() {
+    LOGGER.info("Writing out score distribution...");
+
+    final int resolution = Math.min(1000, Math.max(100, options.getNumIterations() / 100));
+
+    try (final ScoreDistributionWriter writer =
+        new ScoreDistributionWriter(new File(options.getOutputScoreDistFile()))) {
+      for (Entry<Integer, ScoreDistribution> e : scoreDistribution.entrySet()) {
+        writer.write(e.getKey(), e.getValue(), resolution);
+      }
+    } catch (IOException e1) {
+      throw new RuntimeException("Problem writing to file", e1);
+    }
+
+    LOGGER.info("Done writing out distribution.");
   }
 
   private void printFooter() {
